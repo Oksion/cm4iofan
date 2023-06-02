@@ -37,52 +37,55 @@ type EMC2301 struct {
 
 // New opens the connection to the EMC2301, verifies the product id, performs the initial configuration and returns the handle
 func New() (*EMC2301, error) {
-	bus, addr, err := findEmc2301()
+	bus, err := scanI2CBusForDevice(Emc2301Addr)
 	if err != nil {
 		return nil, err
 	}
-	c, err := smbus.Open(bus, addr)
+
+	c, err := smbus.Open(bus, Emc2301Addr)
 	if err != nil {
 		return nil, err
 	}
-	id, err := c.ReadReg(addr, Emc2301ProductIdReg)
+
+	id, err := c.ReadReg(Emc2301ProductIdReg)
 	if err != nil {
 		return nil, err
 	}
 	if Emc2301ProductIdVal != id {
 		return nil, errors.New("unexpected product id")
 	}
-	conf, err := c.ReadReg(addr, Emc2301ConfigReg)
+
+	conf, err := c.ReadReg(Emc2301ConfigReg)
 	if err != nil {
 		return nil, err
 	}
 	// set RNG1[1:0] to 500 RPM (-> m = 1)
 	conf &= ^(uint8(0b11) << 5)
-	err = c.WriteReg(addr, Emc2301ConfigReg, conf)
+	err = c.WriteReg(Emc2301ConfigReg, conf)
 	if err != nil {
 		return nil, err
 	}
+
 	return &EMC2301{conn: c}, nil
 }
 
-// findEmc2301 dynamically searches for the EMC2301 device on available I2C buses
-func findEmc2301() (int, int, error) {
+// scanI2CBusForDevice scans the available I2C buses for the specified device address
+// and returns the bus number if the device is found.
+func scanI2CBusForDevice(addr uint8) (int, error) {
 	for bus := 0; bus <= 10; bus++ {
-		c, err := smbus.Open(bus, Emc2301Addr)
+		c, err := smbus.Open(bus, addr)
 		if err == nil {
-			_, err = c.ReadReg(Emc2301Addr, Emc2301ProductIdReg)
 			c.Close()
-			if err == nil {
-				return bus, Emc2301Addr, nil
-			}
+			return bus, nil
 		}
 	}
-	return 0, 0, errors.New("EMC2301 device not found")
+
+	return -1, errors.New("EMC2301 device not found")
 }
 
 // GetDutyCycle reads and returns the current PWM duty cycle in %
 func (ctrl *EMC2301) GetDutyCycle() (int, error) {
-	v, err := ctrl.conn.ReadReg(Emc2301Addr, Emc2301DutyCycleReg)
+	v, err := ctrl.conn.ReadReg(Emc2301DutyCycleReg)
 	if err != nil {
 		return -1, err
 	}
@@ -97,26 +100,26 @@ func (ctrl *EMC2301) SetDutyCycle(pct int) error {
 	}
 	// emc2301.pdf: EQUATION 4-1: REGISTER VALUE TO DRIVE
 	v := math.Round(255 * (float64(pct) / 100))
-	return ctrl.conn.WriteReg(Emc2301Addr, Emc2301DutyCycleReg, uint8(v))
+	return ctrl.conn.WriteReg(Emc2301DutyCycleReg, uint8(v))
 }
 
-// RPMResult contains the result of a RPM measurement
+// RPMResult contains the result of an RPM measurement
 type RPMResult struct {
 	// Rpm The measured/calculated RPM (valid if !Stopped && !Undef)
 	Rpm int
-	// Stopped is true, when the PWM duty cycle is set to 0
+	// Stopped is true when the PWM duty cycle is set to 0
 	Stopped bool
-	// Undef is true, when the TACH value is too low to calculate the RPM (emc2301.pdf: EQUATION 4-3: SIMPLIFIED TACH CONVERSION)
+	// Undef is true when the TACH value is too low to calculate the RPM (emc2301.pdf: EQUATION 4-3: SIMPLIFIED TACH CONVERSION)
 	Undef bool
 }
 
 // GetRPM measures/calculates the current RPM (if possible)
 func (ctrl *EMC2301) GetRPM() (*RPMResult, error) {
-	h, err := ctrl.conn.ReadReg(Emc2301Addr, Emc2301TachHighReg)
+	h, err := ctrl.conn.ReadReg(Emc2301TachHighReg)
 	if err != nil {
 		return &RPMResult{}, err
 	}
-	l, err := ctrl.conn.ReadReg(Emc2301Addr, Emc2301TachLowReg)
+	l, err := ctrl.conn.ReadReg(Emc2301TachLowReg)
 	if err != nil {
 		return &RPMResult{}, err
 	}
