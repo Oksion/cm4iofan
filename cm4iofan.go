@@ -37,50 +37,55 @@ type EMC2301 struct {
 
 // New opens the connection to the EMC2301, verifies the product id, performs the initial configuration and returns the handle
 func New() (*EMC2301, error) {
-	bus, err := scanI2CBusForDevice(Emc2301Addr)
+	addr, err := FindEmc2301Address()
 	if err != nil {
 		return nil, err
 	}
 
-	c, err := smbus.Open(bus, Emc2301Addr)
+	c, err := smbus.Open(addr)
 	if err != nil {
 		return nil, err
 	}
 
 	id, err := c.ReadReg(Emc2301ProductIdReg)
 	if err != nil {
+		c.Close()
 		return nil, err
 	}
+
 	if Emc2301ProductIdVal != id {
+		c.Close()
 		return nil, errors.New("unexpected product id")
 	}
 
 	conf, err := c.ReadReg(Emc2301ConfigReg)
 	if err != nil {
+		c.Close()
 		return nil, err
 	}
+
 	// set RNG1[1:0] to 500 RPM (-> m = 1)
 	conf &= ^(uint8(0b11) << 5)
 	err = c.WriteReg(Emc2301ConfigReg, conf)
 	if err != nil {
+		c.Close()
 		return nil, err
 	}
 
 	return &EMC2301{conn: c}, nil
 }
 
-// scanI2CBusForDevice scans the available I2C buses for the specified device address
-// and returns the bus number if the device is found.
-func scanI2CBusForDevice(addr uint8) (int, error) {
+// FindEmc2301Address finds the I2C bus number where the EMC2301 device is connected
+func FindEmc2301Address() (int, error) {
 	for bus := 0; bus <= 10; bus++ {
-		c, err := smbus.Open(bus, addr)
+		c, err := smbus.Open(bus, Emc2301Addr)
 		if err == nil {
 			c.Close()
 			return bus, nil
 		}
 	}
 
-	return -1, errors.New("EMC2301 device not found")
+	return -1, errors.New("device not found")
 }
 
 // GetDutyCycle reads and returns the current PWM duty cycle in %
@@ -103,13 +108,13 @@ func (ctrl *EMC2301) SetDutyCycle(pct int) error {
 	return ctrl.conn.WriteReg(Emc2301DutyCycleReg, uint8(v))
 }
 
-// RPMResult contains the result of an RPM measurement
+// RPMResult contains the result of a RPM measurement
 type RPMResult struct {
 	// Rpm The measured/calculated RPM (valid if !Stopped && !Undef)
 	Rpm int
-	// Stopped is true when the PWM duty cycle is set to 0
+	// Stopped is true, when the PWM duty cycle is set to 0
 	Stopped bool
-	// Undef is true when the TACH value is too low to calculate the RPM (emc2301.pdf: EQUATION 4-3: SIMPLIFIED TACH CONVERSION)
+	// Undef is true, when the TACH value is too low to calculate the RPM (emc2301.pdf: EQUATION 4-3: SIMPLIFIED TACH CONVERSION)
 	Undef bool
 }
 
