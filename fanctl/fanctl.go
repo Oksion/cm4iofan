@@ -5,7 +5,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/tmsmr/cm4iofan"
+	"github.com/Oksion/cm4iofan"
 )
 
 func usage() {

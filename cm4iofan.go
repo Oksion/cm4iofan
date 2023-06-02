@@ -8,8 +8,6 @@ import (
 )
 
 const (
-	// Emc2301Bus The i2c bus, the EMC2301 is connected to (cm4io.pdf: 2.9 Fan connector)
-	Emc2301Bus = 10
 	// Emc2301Addr The address of the EMC2301 (cm4io.pdf: 2.9 Fan connector)
 	Emc2301Addr = 0x2F
 
@@ -39,28 +37,47 @@ type EMC2301 struct {
 
 // New opens the connection to the EMC2301, verifies the product id, performs the initial configuration and returns the handle
 func New() (*EMC2301, error) {
-	c, err := smbus.Open(Emc2301Bus, Emc2301Addr)
+	bus, addr, err := findEmc2301()
 	if err != nil {
 		return nil, err
 	}
-	id, err := c.ReadReg(Emc2301Addr, Emc2301ProductIdReg)
+	c, err := smbus.Open(bus, addr)
+	if err != nil {
+		return nil, err
+	}
+	id, err := c.ReadReg(addr, Emc2301ProductIdReg)
 	if err != nil {
 		return nil, err
 	}
 	if Emc2301ProductIdVal != id {
 		return nil, errors.New("unexpected product id")
 	}
-	conf, err := c.ReadReg(Emc2301Addr, Emc2301ConfigReg)
+	conf, err := c.ReadReg(addr, Emc2301ConfigReg)
 	if err != nil {
 		return nil, err
 	}
 	// set RNG1[1:0] to 500 RPM (-> m = 1)
 	conf &= ^(uint8(0b11) << 5)
-	err = c.WriteReg(Emc2301Addr, Emc2301ConfigReg, conf)
+	err = c.WriteReg(addr, Emc2301ConfigReg, conf)
 	if err != nil {
 		return nil, err
 	}
 	return &EMC2301{conn: c}, nil
+}
+
+// findEmc2301 dynamically searches for the EMC2301 device on available I2C buses
+func findEmc2301() (int, int, error) {
+	for bus := 0; bus <= 10; bus++ {
+		c, err := smbus.Open(bus, Emc2301Addr)
+		if err == nil {
+			_, err = c.ReadReg(Emc2301Addr, Emc2301ProductIdReg)
+			c.Close()
+			if err == nil {
+				return bus, Emc2301Addr, nil
+			}
+		}
+	}
+	return 0, 0, errors.New("EMC2301 device not found")
 }
 
 // GetDutyCycle reads and returns the current PWM duty cycle in %
