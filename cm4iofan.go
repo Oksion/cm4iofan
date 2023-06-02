@@ -8,9 +8,6 @@ import (
 )
 
 const (
-	// Emc2301Addr The address of the EMC2301 (cm4io.pdf: 2.9 Fan connector)
-	Emc2301Addr = 0x2F
-
 	// Emc2301ProductIdReg Register containing the EMC2301's product id (emc2301.pdf: TABLE 6-1)
 	Emc2301ProductIdReg = 0xFD
 	// Emc2301ProductIdVal The EMC2301's product id (emc2301.pdf: TABLE 6-1)
@@ -42,30 +39,30 @@ func New() (*EMC2301, error) {
 		return nil, err
 	}
 
-	c, err := smbus.Open(addr)
+	c, err := smbus.Open(addr, Emc2301ProductIdReg)
 	if err != nil {
 		return nil, err
 	}
 
-	id, err := c.ReadReg(Emc2301ProductIdReg)
+	id, err := c.ReadReg(Emc2301ProductIdReg, 1)
 	if err != nil {
 		c.Close()
 		return nil, err
 	}
 
-	if Emc2301ProductIdVal != id {
+	if Emc2301ProductIdVal != id[0] {
 		c.Close()
 		return nil, errors.New("unexpected product id")
 	}
 
-	conf, err := c.ReadReg(Emc2301ConfigReg)
+	conf, err := c.ReadReg(Emc2301ConfigReg, 1)
 	if err != nil {
 		c.Close()
 		return nil, err
 	}
 
 	// set RNG1[1:0] to 500 RPM (-> m = 1)
-	conf &= ^(uint8(0b11) << 5)
+	conf[0] &= ^(uint8(0b11) << 5)
 	err = c.WriteReg(Emc2301ConfigReg, conf)
 	if err != nil {
 		c.Close()
@@ -78,10 +75,13 @@ func New() (*EMC2301, error) {
 // FindEmc2301Address finds the I2C bus number where the EMC2301 device is connected
 func FindEmc2301Address() (int, error) {
 	for bus := 0; bus <= 10; bus++ {
-		c, err := smbus.Open(bus, Emc2301Addr)
+		c, err := smbus.Open(bus, 0x00)
 		if err == nil {
+			_, err = c.ReadReg(Emc2301ProductIdReg, 1)
 			c.Close()
-			return bus, nil
+			if err == nil {
+				return bus, nil
+			}
 		}
 	}
 
@@ -90,12 +90,12 @@ func FindEmc2301Address() (int, error) {
 
 // GetDutyCycle reads and returns the current PWM duty cycle in %
 func (ctrl *EMC2301) GetDutyCycle() (int, error) {
-	v, err := ctrl.conn.ReadReg(Emc2301DutyCycleReg)
+	v, err := ctrl.conn.ReadReg(Emc2301DutyCycleReg, 1)
 	if err != nil {
 		return -1, err
 	}
 	// emc2301.pdf: EQUATION 4-1: REGISTER VALUE TO DRIVE
-	return int(math.Round((float64(v) / 255) * 100)), nil
+	return int(math.Round((float64(v[0]) / 255) * 100)), nil
 }
 
 // SetDutyCycle sets the PWM duty cycle in %
@@ -105,7 +105,7 @@ func (ctrl *EMC2301) SetDutyCycle(pct int) error {
 	}
 	// emc2301.pdf: EQUATION 4-1: REGISTER VALUE TO DRIVE
 	v := math.Round(255 * (float64(pct) / 100))
-	return ctrl.conn.WriteReg(Emc2301DutyCycleReg, uint8(v))
+	return ctrl.conn.WriteReg(Emc2301DutyCycleReg, []uint8{uint8(v)})
 }
 
 // RPMResult contains the result of a RPM measurement
@@ -120,18 +120,18 @@ type RPMResult struct {
 
 // GetRPM measures/calculates the current RPM (if possible)
 func (ctrl *EMC2301) GetRPM() (*RPMResult, error) {
-	h, err := ctrl.conn.ReadReg(Emc2301TachHighReg)
+	h, err := ctrl.conn.ReadReg(Emc2301TachHighReg, 1)
 	if err != nil {
 		return &RPMResult{}, err
 	}
-	l, err := ctrl.conn.ReadReg(Emc2301TachLowReg)
+	l, err := ctrl.conn.ReadReg(Emc2301TachLowReg, 1)
 	if err != nil {
 		return &RPMResult{}, err
 	}
 	// HIGH BYTE - Bit 7: 2048 ... Bit 0: 32
 	// LOW BYTE - Bit 7: 16 ... Bit 3: 1, Bit 0-2: ignored
-	tach := uint16(h) << 5
-	tach |= uint16(l) >> 3
+	tach := uint16(h[0]) << 5
+	tach |= uint16(l[0]) >> 3
 	// emc2301.pdf: EQUATION 4-3: SIMPLIFIED TACH CONVERSION (with m = 1)
 	rpm := int(Emc2301Tach2RPM / uint32(tach))
 	// when rpm > 500, we can trust the value
